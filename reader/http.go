@@ -1,40 +1,49 @@
 package reader
 
 import (
+	"github.com/originalgremlin/stream/configuration"
+	"github.com/originalgremlin/stream/structs"
 	"net/http"
 	"strings"
-	"github.com/originalgremlin/stream/conf"
-	"github.com/originalgremlin/stream/structs/wire"
-	"github.com/originalgremlin/stream/structs/message"
 )
 
-type HTTP struct{}
-
-func NewHTTP() HTTP {
-	return HTTP{}
+type HTTP struct {
+	conf     configuration.Configuration
+	pipeline structs.Pipeline
 }
 
-func (server *HTTP) Serve(c conf.Configuration, w wire.Wire) error {
-	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		switch req.Method {
-		case "POST":
-			// TODO: error handling
-			message := message.Message{
-				Topic:    strings.Split(req.URL.Path, "/")[1],
-				Contents: make([]byte, req.ContentLength),
+func NewHTTP(conf configuration.Configuration) HTTP {
+	return HTTP{
+		conf,
+		structs.NewPipeline(),
+	}
+}
+
+func (r *HTTP) Read() structs.Pipeline {
+	go func() {
+		http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+			switch req.Method {
+			case "POST":
+				// TODO: error handling
+				topic := strings.Split(req.URL.Path, "/")[1]
+				contents := make([]byte, req.ContentLength)
+				req.Body.Read(contents)
+				r.pipeline.Messages <- structs.NewMessage(topic, contents)
 			}
-			// TODO: error handling
-			req.Body.Read(message.Contents)
-			w <- message
-		}
-	})
-	return http.ListenAndServe(c.String("port"), nil)
+		})
+		r.pipeline.Errors <- http.ListenAndServe(r.conf.String("port"), nil)
+	}()
+	return r.pipeline
 }
 
-func (server *HTTP) Close() error {
+func (r *HTTP) Reload() error {
 	return nil
 }
 
-func (server *HTTP) Shutdown() error {
+func (r *HTTP) Shutdown() error {
+	return nil
+}
+
+func (r *HTTP) Close() error {
 	return nil
 }

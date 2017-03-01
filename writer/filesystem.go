@@ -2,42 +2,35 @@ package writer
 
 import (
 	"encoding/gob"
+	"github.com/originalgremlin/stream/structs"
 	"os"
-	"github.com/originalgremlin/stream/structs/wire"
-	"github.com/originalgremlin/stream/conf"
-	"github.com/originalgremlin/stream/structs/message"
 )
 
 type FileSystem struct {
-	In wire.Wire
-	Err chan error
+	conf structs.Configuration
 }
 
-func NewFileSystem(err chan error) FileSystem {
-	return FileSystem{
-		wire.New(),
-		make(chan error),
-	}
+func FileSystem(conf structs.Configuration) FileSystem {
+	return FileSystem{conf}
 }
 
-func (writer FileSystem) Start(conf conf.Configuration) error {
+func (writer FileSystem) Write(messages chan structs.Message, errors chan error) {
 	// TODO: buffer the writes?
-	file, err := os.OpenFile(conf.String("path"), os.O_APPEND, os.ModeAppend)
+	file, err := os.OpenFile(writer.conf.String("path"), os.O_APPEND, os.ModeAppend)
 	if err != nil {
-		return err
+		errors <- err
+		return messages, errors
 	}
 	defer file.Close()
 	encoder := gob.NewEncoder(file)
 
-	for message := range writer.In {
-		if err := encoder.Encode(message); err != nil {
-			writer.Err <- err
+	go func() {
+		for message := range messages {
+			if err := encoder.Encode(message); err != nil {
+				errors <- err
+			} else {
+				messages <- message
+			}
 		}
-	}
-	defer close(writer.Err)
-	return nil
-}
-
-func (writer FileSystem) Write(message message.Message) {
-	writer.In <- message
+	}()
 }

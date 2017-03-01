@@ -1,108 +1,74 @@
 package main
 
 import (
-	"github.com/originalgremlin/stream/conf"
-	"github.com/originalgremlin/stream/errors"
+	"github.com/originalgremlin/stream/configuration"
+	"github.com/originalgremlin/stream/filter"
 	"github.com/originalgremlin/stream/reader"
 	"github.com/originalgremlin/stream/signals"
 	"github.com/originalgremlin/stream/structs"
-	"github.com/originalgremlin/stream/structs/wire"
+	"github.com/originalgremlin/stream/transform"
 	"github.com/originalgremlin/stream/writer"
 	"os"
 	"syscall"
 )
 
 func main() {
-	// setup
-	conf := conf.New()
-	wire := wire.New()
-	errch := make(chan error)
+	conf := configuration.NewConfiguration()
 
-	// readers
-	readers := []structs.Reader{
-		reader.NewHTTP(),
-	}
+	readers := reader.Readers(
+		reader.NewHTTP(conf),
+	)
 
-	// transformers
-	transformers := []structs.Transformer{
+	transforms := transform.Transforms(
+		transform.Identity,
+	)
 
-	}
+	filters := filter.Filters(
+		filter.Empty,
+	)
 
-	// writers
-	writers := []structs.Writer{
-		writer.NewFileSystem(errch),
-	}
+	writers := writer.Writers(
+		writer.FileSystem(conf),
+	)
 
-	// forward all messages from servers to writers
-	for _, r := range readers {
-		go r.Start(conf, wire)
-	}
-	for _, w := range writers {
-		go w.Start(conf)
-	}
-	for message := range wire {
-		for _, t := range transformers {
-			message = t.Transform(message)
-		}
-		for _, w := range writers {
-			w.Write(message)
-		}
-	}
+	structs.MergePipeline(readers.Read, transforms, filters, writers.Write)
 
 	// handle signals
+	// SIGHUP: reload configuration
 	signals.Handle(syscall.SIGHUP, func(sig os.Signal) error {
-		c := make(chan error)
-		errs := errors.Errors(len(readers) + len(writers))
-
-		// reload configuration
-		for _, r := range readers {
-			go func() {
-				c <- r.Reload()
-			}()
+		if ok, err := configuration.Validate(); ok {
+			conf := configuration.NewConfiguration()
+			errs := structs.Errors()
+			errs.Append(readers.Reload(conf), writers.Reload(conf))
+			return errs.Error()
+		} else {
+			return err
 		}
-		for _, w := range writers {
-			go func() {
-				c <- w.Reload()
-			}()
-		}
-
-		for err := range c {
-			errs = errs.Append(err)
-		}
-		return errs.Error()
 	})
 
+	// SIGTERM: exit gracefully
 	signals.Handle(syscall.SIGTERM, func(sig os.Signal) error {
-		c := make(chan error)
-		errs := errors.Errors(len(readers) + len(writers))
-
-		// exit gracefully
-		for _, r := range readers {
-			go r.Shutdown()
+		errs := structs.Errors()
+		// TODO: enforce a timeout?
+		errs.Append(readers.Shutdown(), writers.Shutdown())
+		if errs.Error() == nil {
+			os.Exit(0)
+		} else {
+			os.Exit(1)
 		}
-		for _, w := range writers {
-			go w.Shutdown()
-		}
-
-		for err := range c {
-			errs = errs.Append(err)
-		}
-		if !errs.IsNil() {
-			// TODO: print error
-		}
-		// TODO: exit?
 		return errs.Error()
 	})
 
+	// SIGINT: exit forcefully
 	signals.Handle(syscall.SIGINT, func(sig os.Signal) error {
-		// exit immediately
-		for _, r := range readers {
-			go r.Close()
+		errs := structs.Errors()
+		// TODO: enforce a timeout?
+		errs.Append(readers.Close(), writers.Close())
+		if errs.Error() == nil {
+			os.Exit(0)
+		} else {
+			os.Exit(1)
 		}
-		for _, w := range writers {
-			go w.Close()
-		}
-		return nil
+		return errs.Error()
 	})
-
 }

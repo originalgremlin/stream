@@ -1,14 +1,12 @@
 package structs
 
 import (
-	"github.com/originalgremlin/stream/structs/message"
-	"github.com/originalgremlin/stream/structs/wire"
-	"github.com/originalgremlin/stream/conf"
+	"github.com/originalgremlin/stream/configuration"
 )
 
 type SignalHandler interface {
 	// Reload configuration.
-	Reload() error
+	Reload(configuration.Configuration) error
 
 	// Shutdown gracefully shuts down the server without interrupting any active connections.
 	Shutdown() error
@@ -18,16 +16,11 @@ type SignalHandler interface {
 }
 
 type Reader interface {
-	Start(conf.Configuration, wire.Wire) error
+	Read() Pipeline
 	SignalHandler
 }
 
-type Transformer interface {
-	Transform(message.Message) message.Message
-}
-
 type Writer interface {
-	Start(conf.Configuration) error
-	Write(message.Message)
+	Write(Pipeline) Pipeline
 	SignalHandler
 }
